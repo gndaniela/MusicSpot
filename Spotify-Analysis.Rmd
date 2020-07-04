@@ -1,0 +1,1057 @@
+---
+title: "Spotify Analysis"
+
+---
+
+LIBRARIES
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(anytime)
+library(lubridate)
+library(scales)
+library(RColorBrewer)
+library(corrplot)
+
+
+```
+
+```{r}
+playlist_songs <- read.csv('playlist_songs_base.csv')
+```
+
+```{r}
+#backup
+playlist_songs_bk <- playlist_songs
+```
+#LIMPIEZA
+#Nombres de columnas
+```{r}
+
+#library(janitor)
+
+playlist_songs <- playlist_songs %>% 
+  clean_names()
+
+colnames(playlist_songs)
+```
+#Sólo casos completos, sin NA
+```{r}
+playlist_songs <- playlist_songs %>% filter(complete.cases(playlist_songs))
+```
+#Album release date as date
+```{r}
+#library(anytime)
+
+playlist_songs$track_album_release_date <- anydate(playlist_songs$track_album_release_date)
+
+class(playlist_songs$track_album_release_date)
+```
+#Obtengo 'Year' 
+#Escalo variables numéricas
+#Obtengo duración en minutos (en lugar de ms)
+```{r}
+#library(lubridate)
+#library(scales)
+
+playlist_songs <- playlist_songs %>% mutate(album_year=year(track_album_release_date),loudness_scaled=rescale(loudness),  tempo_scaled=rescale(tempo),duration_min=duration_ms/1000/60,popularity_rescaled=rescale(track_popularity))
+
+```
+```{r}
+#limpio 1 registro NA
+playlist_songs <- playlist_songs[!is.na(playlist_songs$album_year),]
+```
+
+#Vector de nombres - audio_features
+```{r}
+
+#colnames(playlist_songs)
+
+playlist_songs <- playlist_songs %>% select(c("playlist_id","artist_id","track_album_id","track_id","playlist_name","playlist_genre","playlist_subgenre","track_name","track_artist","track_album_name","track_album_release_date","track_popularity","duration_ms","key","mode","danceability","valence","energy","speechiness","acousticness","liveness","instrumentalness","loudness","tempo",'album_year','loudness_scaled','tempo_scaled','duration_min','popularity_rescaled'))
+
+audio_features <- playlist_songs %>% select(names(playlist_songs[12:28]),-album_year,-duration_ms) %>% names()
+
+
+playlist_songs %>% select(audio_features) %>% summary()
+
+
+unique(playlist_songs$playlist_genre)
+
+
+```
+
+#Outliers - Elimino registros de duración mayor a 9'
+
+```{r}
+playlist_songs <- playlist_songs[!playlist_songs$duration_min > 9,]
+
+summary(playlist_songs$duration_min)
+```
+
+#Correlación entre audio features
+
+#-Energy & Loudness - correlación positiva
+#-Energy & Acousticness - correlación negativa
+
+```{r}
+#library(RColorBrewer)
+#library(corrplot)
+
+playlist_songs %>%
+  select(audio_features,-loudness_scaled,-tempo_scaled,-duration_min) %>%
+  scale() %>%
+  cor() %>%
+  corrplot(method = 'color', 
+         order = 'hclust', 
+         type = 'upper', 
+         diag = FALSE, 
+         tl.col = 'black',
+         addCoef.col = "grey30",
+         number.cex = 0.6,
+         col=brewer.pal(n=8,name='PRGn'), 
+                     main = 'Audio Feature Correlation',
+         mar = c(1,1,1,1)
+                     )
+
+
+```
+
+#Agrego década
+
+```{r}
+
+playlist_songs <- playlist_songs %>% 
+  mutate(decade = case_when(between(album_year,1950,1960) == TRUE ~ "The 50s",
+                             between(album_year,1960,1970) == TRUE ~"The 60s",
+                             between(album_year,1970,1980) == TRUE ~"The 70s",
+                             between(album_year,1980,1990) == TRUE ~"The 80s",
+                             between(album_year,1990,2000) == TRUE ~"The 90s",
+                             between(album_year,2000,2010) == TRUE ~"The 00s",
+                             between(album_year,2010,2020) == TRUE ~"The 10s",
+                            TRUE ~ "Other" ))
+
+class(playlist_songs$decade)
+
+#playlist_songs %>% filter(decade=='Other')
+
+playlist_songs$decade <- factor(playlist_songs$decade, levels = c("The 50s","The 60s", "The 70s", "The 80s", "The 90s","The 00s", "The 10s"), ordered = T)
+```
+
+```{r}
+
+table(playlist_songs$decade)
+
+```
+
+```{r}
+
+playlist_songs %>% select(decade,danceability) %>% group_by(decade) %>% summarise(min(danceability))
+
+playlist_songs <- playlist_songs[-which(playlist_songs$danceability==0),]
+
+summary(playlist_songs[(playlist_songs$decade=='The 80s'),]$danceability)
+
+```
+
+```{r}
+
+playlist_songs <- playlist_songs[!playlist_songs$duration_min > 9,]
+
+playlist_songs %>% select(audio_features,'duration_min') %>% summary()
+
+```
+#Distribución de audio features según el género
+
+```{r}
+playlist_songs %>%
+  select(c('playlist_genre', audio_features)) %>%
+  pivot_longer(cols = audio_features) %>%
+  ggplot(aes(x = value)) +
+  geom_density(aes(color = playlist_genre), alpha = 0.5) +
+  facet_wrap(~name, ncol = 3, scales = 'free') +
+  labs(title = 'Spotify Audio Feature Density - by Genre',
+       x = '', y = 'density') +
+  theme(axis.text.y = element_blank()) + 
+  scale_color_viridis_d()
+```
+# Distribución de audio features según la década
+```{r}
+
+playlist_songs %>%
+  select(c('decade', audio_features)) %>%
+  pivot_longer(cols = audio_features) %>%
+  ggplot(aes(x = value)) +
+  geom_density(aes(color = decade), alpha = 0.5) +
+  facet_wrap(~name, ncol = 3, scales = 'free') +
+  labs(title = 'Spotify Audio Feature Density - by Decade',
+       x = '', y = 'density') +
+  theme(axis.text.y = element_blank()) + 
+  scale_color_viridis_d()
+
+```
+
+#Boxplot Danceability Decade
+```{r}
+
+ggplot(playlist_songs, aes(x=decade, y=danceability, fill=decade)) + 
+    geom_boxplot(alpha=0.5) +
+    theme(legend.position="none") +
+  scale_fill_brewer(palette="Set3")+
+  labs(title='Danceability per Decade')
+
+```
+#Boxplot Danceability Genre
+```{r}
+ggplot(playlist_songs, aes(x=playlist_genre, y=danceability, fill=playlist_genre)) + 
+    geom_boxplot(alpha=0.5) +
+    #theme(legend.position="none") +
+  scale_fill_brewer(palette="Set3")+
+  labs(title='Danceability per Genre')
+```
+
+#Valence by Genre
+```{r}
+library(ggridges)
+
+ggplot(playlist_songs, aes(x=valence, colour=playlist_genre)) + 
+    geom_density_line(alpha = 0.01) +
+  scale_color_viridis_d()
+
+```
+
+
+```{r}
+
+library(ggplot2)
+library(ggjoy) #Deprecated. Use ggridges
+
+ggplot(playlist_songs, aes(x = energy, y = decade, fill=decade)) + 
+    geom_joy(alpha=0.5) + 
+    theme_joy() +
+    ggtitle("Energy per Decade")
+
+```
+
+
+```{r}
+
+#unique(playlist_songs$playlist_genre)
+
+playlist_songs %>%
+ggplot(aes(x = danceability, y = decade, fill=factor(playlist_genre))) + 
+    geom_density_ridges(alpha=0.25, scale=0.9) + 
+    theme_ridges() +
+    ggtitle("Danceability per Genre")+  
+  scale_fill_viridis_d(direction = -1)
+
+
+
+```
+
+#Audio features means by genre
+
+```{r}
+
+summary_mean <- playlist_songs %>%
+  select(playlist_genre, audio_features, -loudness_scaled,-tempo_scaled) %>% group_by(playlist_genre) %>%  summarise_all(mean) 
+
+summary_mean
+
+```
+
+```{r}
+
+features_orig <- playlist_songs %>%
+  select(audio_features, -loudness_scaled,-tempo_scaled) %>% names()
+
+
+summary_mean_t <- summary_mean %>% select(features_orig) %>%  scale() %>% t() %>% cor() 
+
+colnames(summary_mean_t) <- summary_mean$playlist_genre
+rownames(summary_mean_t) <- summary_mean$playlist_genre
+
+```
+#Correlation by Genres
+
+```{r}
+#Genre Correlation
+
+summary_mean_t %>% 
+  corrplot(method = 'color', 
+         order = 'hclust', 
+         type = 'upper', 
+         diag = FALSE, 
+         tl.col = 'black',
+         addCoef.col = "grey30",
+         number.cex = 0.6,
+         col=brewer.pal(n=8,name='PRGn'), 
+                     main = 'Audio Genre Correlation',
+         mar = c(1,1,1,1)
+        
+                     )
+
+```
+
+#PREDICCÓN DE GÉNERO SEGÚN AUDIO FEATURES
+
+```{r}
+#Escalo variables
+playlist_songs <- playlist_songs %>% mutate(key_scaled=rescale(key))
+playlist_songs <- playlist_songs %>% mutate(duration_min_scaled=rescale(duration_min))
+
+#Vector de features escaladas
+audio_features_model <- playlist_songs %>% select(audio_features,-loudness,-tempo,-track_popularity,-key,key_scaled,-duration_min,duration_min_scaled) %>% names()
+
+
+```
+
+#Dataset para el modelo (sólo clase y variables escaladas)
+
+```{r}
+
+model_dataset <- playlist_songs %>% select(playlist_genre,audio_features_model)
+
+model_dataset$playlist_genre <- as.factor(model_dataset$playlist_genre)
+
+class(model_dataset$playlist_genre)
+```
+#TRAINING - TESTING SPLIT - GÉNEROS
+
+```{r}
+#Muestra totalmente aleatoria
+
+library(caret)
+set.seed(1234)
+
+trainIndex <- createDataPartition(model_dataset$playlist_genre, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+model_dataset_train <- model_dataset[trainIndex,]
+model_dataset_test  <- model_dataset[-trainIndex,]
+
+```
+
+#DECISION TREE - GÉNEROS
+```{r}
+
+library(rpart)
+library(rpart.plot)
+
+set.seed(1234)
+modeldt <- rpart(playlist_genre ~ ., model_dataset_train,method='class')
+
+## GRÁFICO
+ 
+rpart.plot(modeldt,fallen.leaves = F, type=5,extra=8,under.cex = 1,round=0,branch.lwd = 4, main='Decision Tree Genre',tweak = 1.2,
+box.palette = list(purple = "#9f2c4f",
+               pink = "#e15656",
+               orange = '#f29655',
+               dark_green = "#347659",
+              green = "#3bab6a",
+               blue = '#5DA9E9'))
+
+
+```
+
+#PREDICT ÁRBOL - GÉNEROS
+
+#Accuracy : 0.3793
+
+#Predicción más precisa: rock
+#Predicción menos precisa: pop
+```{r}
+## PREDICCIÓN EN TEST
+ 
+predict_modeldt = predict(modeldt,model_dataset_test,type='class')
+
+
+```
+```{r}
+library(caret)
+cmatdt <- confusionMatrix(data = predict_modeldt, reference = model_dataset_test$playlist_genre)
+
+cmatdt
+```
+```{r}
+library(scales)
+
+ggplotConfusionMatrix <- function(m){
+  cmat <- paste("Accuracy", percent_format()(m$overall[1]))
+
+  p <-
+    ggplot(data = as.data.frame(m$table) ,
+           aes(x = Reference, y = Prediction)) +
+    geom_tile(aes(fill = log(Freq)), colour = "white") +
+    scale_fill_gradient(low = "white", high = "mediumseagreen") +
+    geom_text(aes(x = Reference, y = Prediction, label = Freq)) +
+    theme(legend.position = "none") +
+    ggtitle(cmat)
+  return(p)
+}
+
+ggplotConfusionMatrix(cmatdt)
+```
+
+
+```{r}
+mean(cmatdt[["byClass"]][ , "F1"])
+mean(cmatdt[["byClass"]][ , "Balanced Accuracy"])
+```
+
+
+#REGRESÓN LOGÍSTICA MULTICLASE
+
+```{r}
+install.packages('nnet')
+library(nnet)
+
+# Fit the model
+modellog <- nnet::multinom(playlist_genre ~., data = model_dataset_train)
+# Summarize the model
+summary(modellog)
+
+```
+```{r}
+varImp(modellog)
+```
+```{r}
+
+
+
+implog <- varImp(modellog)
+
+implog <- as.data.frame(implog)
+implog$varnames <- rownames(implog) # row names to column
+rownames(implog) <- NULL  
+#imp$var_categ <- rep(1:2, 5) # random var category
+
+
+ggplot(implog, aes(x=reorder(varnames, Overall), y=Overall))+ 
+  geom_point(color='mediumseagreen',size =2) +
+  geom_segment(aes(x=varnames,xend=varnames,y=0,yend=Overall),color='green') +
+  ylab("Overall Importance") +
+  xlab("Variable Name") +
+  coord_flip()
+
+
+```
+```{r}
+coeflog <- summary(modellog)$coefficients
+coeflog <- as.data.frame(coeflog)
+coeflog
+
+
+coeflog["Total" ,] <- colSums(abs(coeflog))
+
+```
+
+
+```{r}
+
+# Make predictions
+predict_modellog <- modellog %>% predict(model_dataset_test)
+head(predict_modellog)
+
+```
+
+```{r}
+# Model accuracy
+mean(predict_modellog == model_dataset_test$playlist_genre)
+```
+```{r}
+
+cmatlog <- confusionMatrix(data = predict_modellog, reference = model_dataset_test$playlist_genre)
+
+cmatlog
+
+```
+```{r}
+ggplotConfusionMatrix(cmatlog)
+```
+
+```{r}
+```
+
+#RANDOM FOREST - GÉNEROS
+
+Best model: 
+Cross validation = 10-fold 
+Optimal number of variables sampled at each split(mtry) = 2
+
+Number of trees = 500 (default)
+
+#Accuracy : 0.5596541
+
+#Predicción más precisa: rock
+#Predicción menos precisa: pop
+
+```{r}
+library(randomForest)
+
+set.seed(1234)
+
+modelrf <- train(
+  playlist_genre ~., data = model_dataset_train, method = "rf",
+  trControl = trainControl("cv", number = 10),
+  importance = TRUE
+  )
+
+
+```
+
+
+```{r}
+
+# Best tuning parameter
+modelrf$bestTune
+
+#Modelo final con el 'best tune'
+modelrf$finalModel
+```
+
+
+```{r}
+
+# Make predictions on the test data
+
+predict_modelrf <- modelrf %>% predict(model_dataset_test)
+head(predict_modelrf)
+
+```
+
+
+```{r}
+
+# Compute model accuracy rate
+mean(predict_modelrf == model_dataset_test$playlist_genre)
+
+```
+
+#VARIABLE IMPORTANCE
+
+MeanDecreaseAccuracy, which is the average decrease of model accuracy in predicting the outcome of the out-of-bag samples when a specific variable is excluded from the model.
+
+MeanDecreaseGini, which is the average decrease in node impurity that results from splits over that variable. The Gini impurity index is only used for classification problem. In the regression the node impurity is measured by training set RSS. These measures, calculated using the training set, are less reliable than a measure calculated on out-of-bag data. 
+
+```{r}
+#Variable importance en Final Model
+
+imprf <- importance(modelrf$finalModel)
+imprf 
+```
+
+
+```{r}
+# Plot MeanDecreaseAccuracy
+varImpPlot(modelrf$finalModel, type = 1,main='Variable Importance')
+```
+```{r}
+
+imp <- varImpPlot(modelrf$finalModel, type = 1,main='Variable Importance')
+
+imp <- as.data.frame(imp)
+imp$varnames <- rownames(imp) # row names to column
+rownames(imp) <- NULL  
+
+ggplot(imp, aes(x=reorder(varnames, MeanDecreaseAccuracy), y=MeanDecreaseAccuracy))+ #color=as.factor(var_categ))) + 
+  geom_point(color='mediumseagreen',size =2) +
+  geom_segment(aes(x=varnames,xend=varnames,y=0,yend=MeanDecreaseAccuracy),color='green')+
+ # scale_color_discrete(name="Variable Group") +
+  ylab("MeanDecreaseAccuracy") +
+  xlab("Variable Name") +
+  coord_flip()
+
+```
+
+
+```{r}
+#Variable importance para Random Forest en general
+
+varImp(modelrf)
+
+```
+```{r}
+cmatrf <- confusionMatrix(data = predict_modelrf, reference = model_dataset_test$playlist_genre)
+
+cmatrf
+```
+```{r}
+ggplotConfusionMatrix(cmatrf)
+```
+
+
+#RANDOM FOREST - HIPERPARÁMETROS CAMBIADOS
+
+#Accuracy : 0.561066
+
+
+nodesize: Minimum size of terminal nodes. Default value for classification is 1 and default for regression is 5.
+maxnodes: Maximum number of terminal nodes trees in the forest can have. If not given, trees are grown to the maximum possible (subject to limits by nodesize).
+
+Ignoring these parameters might lead to overfitting on noisy data set. Cross-validation can be used to test different values, in order to select the optimal value.
+
+```{r}
+
+modelsrf <- list()
+
+for (nodesize in c(1, 2, 4, 8)) {
+    set.seed(1234)
+  
+    modelrfh <- train(
+      playlist_genre~., data = model_dataset_train, method="rf", 
+      trControl = trainControl(method="cv", number=10),
+      metric = "Accuracy",
+      nodesize = nodesize
+      )
+    
+    model.name <- toString(nodesize)
+    modelsrf[[model.name]] <- modelrfh
+}
+
+```
+
+
+```{r}
+# Compare results
+
+resamples(modelsrf) %>% summary(metric = "Accuracy")
+```
+```{r}
+# Make predictions on the test data (Mejor modelo es nodesize 1)
+
+predict_modelrfh <- modelsrf[1] %>% predict(model_dataset_test) %>% unlist()
+head(predict_modelrfh)
+```
+```{r}
+# Compute model accuracy rate
+mean(predict_modelrfh == model_dataset_test$playlist_genre)
+```
+```{r}
+#modelrfh$finalModel
+```
+
+#REDUCCIÓN DE DIMENSIONALIDAD
+
+#PCA - Preprocesamiento
+
+```{r}
+
+#Creo PCA con las variables numéricas
+
+set.seed(123)
+pca_1 <- prcomp(model_dataset[,c(2:13)],
+                center = TRUE,
+                scale. = TRUE) 
+
+#SUMARIZACIÓN DE VARIABLES
+
+print(pca_1)
+
+
+```
+
+
+```{r}
+
+#Seleccionar las que expliquen un 70%-75% de la varianza
+sumpca <- summary(pca_1)
+sumpca
+
+
+```
+
+```{r}
+importance_pca <- sumpca$importance
+
+importance_pca[3,7]
+
+percent_format(accuracy=0.01)(importance_pca[3,7])
+```
+```{r}
+rownames(importance_pca)
+```
+
+```{r}
+#Autovalores de las variables
+summary(pca_1)$sd^2
+
+```
+
+#GRÁFICO DE SEDIMENTACIÓN
+
+```{r}
+
+cor(model_dataset[,c(2:13)])
+#matriz de correlación
+
+```
+```{r}
+plot(pca_1, type = "l")
+#Gráfico de sedimentación
+```
+
+#GRÁFICO BIPLOT
+
+```{r}
+
+library(ggfortify)
+
+autoplot(pca_1, data = model_dataset, colour = 'playlist_genre',
+         loadings = TRUE, loadings.colour = 'blue',
+         loadings.label = TRUE, loadings.label.size = 3)
+
+
+
+```
+
+
+```{r}
+
+library(FactoMineR)
+library(factoextra)
+
+res.pca <- PCA(model_dataset[,c(2:13)], scale.unit = TRUE, graph = TRUE)
+
+print(res.pca)
+```
+
+```{r}
+
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+
+```
+
+
+```{r}
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 19))
+```
+
+#RESULTS
+
+```{r}
+var <- get_pca_var(res.pca)
+var
+
+
+```
+
+```{r}
+
+library("corrplot")
+corrplot(var$cos2, is.corr=FALSE)
+```
+
+
+```{r}
+library("corrplot")
+corrplot(var$contrib, is.corr=FALSE) 
+
+```
+```{r}
+fviz_pca_var(res.pca, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07")
+             )
+```
+
+#ADD PCA DIMENSIONS TO DATASET
+
+```{r}
+
+#me quedo con 7 variables, 74,9% de la varianza
+str(pca_1)
+
+model_datasetpca <-cbind(model_dataset,pca_1$x[,1:7])
+
+model_datasetpca <- model_datasetpca[,-(2:13)]
+
+```
+
+#RANDOM FOREST CON PCA DATASET - GÉNEROS
+
+#Accuracy : 0.561066
+```{r}
+
+```
+
+```{r}
+
+library(caret)
+set.seed(1234)
+
+trainIndexpca <- createDataPartition(model_datasetpca$playlist_genre, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+model_datasetpca_train <- model_dataset[trainIndexpca,]
+model_datasetpca_test  <- model_dataset[-trainIndexpca,]
+
+
+```
+
+
+```{r}
+
+modelsrfpca <- list()
+
+for (nodesize in c(1, 2, 4, 8)) {
+    set.seed(1234)
+  
+    modelrfpca <- train(
+      playlist_genre~., data = model_datasetpca_train, method="rf", 
+      trControl = trainControl(method="cv", number=10),
+      metric = "Accuracy",
+      nodesize = nodesize
+      )
+    
+    model.name <- toString(nodesize)
+    modelsrfpca[[model.name]] <- modelrfpca
+}
+
+```
+
+
+```{r}
+# Compare results
+
+resamples(modelsrfpca) %>% summary(metric = "Accuracy")
+```
+
+
+```{r}
+
+# Make predictions on the test data
+
+predict_modelrfpca <- modelsrfpca[1] %>% predict(model_datasetpca_test) %>% unlist()
+head(predict_modelrfpca)
+```
+```{r}
+# Compute model accuracy rate
+mean(predict_modelrfh == model_dataset_test$playlist_genre)
+```
+
+#K-MEANS GÉNEROS
+
+#Agrupar en nuevos "géneros" o clusters, generados a partir de similutides (menores distancias) entre audio features de tracks
+
+```{r}
+
+audio_features_model
+
+```
+
+
+```{r}
+
+model_dataset_dec <- playlist_songs %>% select(playlist_genre,decade,audio_features_model)
+
+model_dataset_dec$playlist_genre <- as.factor(model_dataset$playlist_genre)
+
+class(model_dataset_dec$playlist_genre)
+class(model_dataset_dec$decade)
+```
+
+#Elegir cantidad de clusters 
+
+#WSS - Within-groups Sum of Squares - DISTANCIA INTRA-CLUSTER
+```{r}
+#dataset sólo con variables numéricas
+numerics <- model_dataset_dec %>% select(-playlist_genre,-decade)
+```
+
+
+```{r}
+set.seed(1234)
+library(cluster)
+
+n.clusters <- 14
+wss <- (nrow(numerics)-1)*sum(apply(numerics,2,var))
+for (i in 2:n.clusters){
+  wss[i] <- sum(kmeans(numerics,centers=i)$withinss) #DISTANCIA INTRA-CLUSTER 
+}
+
+plot(1:n.clusters, wss, type="b", xlab="número de clusters",
+     ylab="WCV",
+     main="Cantidad de clusters según variación ",
+     pch=20, cex=2)
+
+```
+
+#BSS - Between-Sum-of-Squares - DISTANCIA ENTRE CLUSTERS
+```{r}
+
+n.clusters <- 14
+bss <- (nrow(numerics)-1)*sum(apply(numerics,2,var))
+for (i in 2:n.clusters){
+  bss[i] <- sum(kmeans(numerics,centers=i)$betweenss) #DISTANCIA ENTRE CLUSTERS
+}
+
+plot(1:n.clusters, bss, type="b", xlab="número de clusters",
+     ylab="WCV",
+     main="Cantidad de clusters según variación ",
+     pch=20, cex=2)
+
+```
+
+#6 clusters elegidos
+
+```{r}
+
+set.seed(1234)
+library(cluster)
+
+# ejecuto k-means
+kclusters <- kmeans(scale(numerics), centers=6, iter.max = 1000)
+
+# append cluster assignment
+model_dataset_deccl <- data.frame(model_dataset_dec, kclusters$cluster)
+
+```
+```{r}
+
+#pruebas con otra cantidad de clusters
+
+set.seed(1234)
+# ejecuto k-means
+kclusters2 <- kmeans(scale(numerics), centers=12, iter.max = 1000)
+kclusters2
+
+
+```
+
+
+```{r}
+# get cluster means - centroide de cada cluster
+aggregatesk <- aggregate(numerics,by=list(kclusters$cluster),FUN=mean)
+aggregatesk$Group.1 <- factor(aggregatesk$Group.1, levels = c(1,2,3,4,5,6),ordered = T)
+
+#means de cada género original
+aggregatesg <- aggregate(numerics,by=list(model_dataset_dec$playlist_genre),FUN=mean)
+
+#dataset unido
+aggregates <- rbind(aggregatesk,aggregatesg)
+
+```
+
+```{r}
+kclusters$size
+
+table(model_dataset_deccl$kclusters)
+table(model_dataset_deccl$playlist_genre)
+```
+```{r}
+
+aggregatesk %>% 
+ pivot_longer(cols = audio_features_model) %>%
+ ggplot(aes(x=name, y=Group.1, fill=value)) +
+  geom_tile() + 
+  scale_fill_gradient() + 
+  geom_text(aes(label = round(value, 1))) +
+  theme(axis.text.x=element_text(angle=45,hjust=1))
+
+```
+
+```{r}
+
+heatmap(as.matrix(aggregatesk[,(2:13)]),Colv = NA, Rowv = NA,col = colorRampPalette(brewer.pal(8, "PiYG"))(25), main="Heatmap")
+
+```
+
+#Agrego variables PCA al dataset de clusters 
+```{r}
+
+model_dataset_deccl$PC1 <- model_datasetpca[,2]
+model_dataset_deccl$PC2 <- model_datasetpca[,3]
+
+```
+#Scatterplot con géneros originales
+```{r}
+
+model_dataset_deccl %>% ggplot(aes(PC1,PC2, color=playlist_genre)) +
+  geom_point(alpha=0.5)
+
+```
+#Scatterplot con clusters k-means
+```{r}
+
+model_dataset_deccl %>% ggplot(aes(PC1,PC2, color=factor(kclusters))) +
+  geom_point(alpha=0.5)
+
+
+
+```
+
+#PREDICCIÓN DE "NUEVOS GÉNEROS"
+```{r}
+
+model_dataset_deccl <- model_dataset_deccl %>% rename(kclusters = cluster)
+
+```
+```{r}
+model_k <- model_dataset_deccl %>% select(audio_features_model, kclusters)
+```
+
+
+```{r}
+
+#TRAINING - TESTING SPLIT - GÉNEROS
+
+#Muestra totalmente aleatoria
+
+
+set.seed(1234)
+
+trainIndexk <- createDataPartition(model_k$kclusters, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+model_dataset_traink <- model_k[trainIndexk,]
+model_dataset_testk  <- model_k[-trainIndexk,]
+
+```
+
+#DECISION TREE KMEANS
+
+```{r}
+
+set.seed(1234)
+
+modeldtk <- rpart(kclusters ~ ., model_dataset_traink,method='class')
+
+## GRÁFICO
+ 
+rpart.plot(modeldtk,fallen.leaves = F, type=5,extra=8,under.cex = 1,round=0,branch.lwd = 4, main='Decision Tree KMeans',tweak = 2,  
+box.palette = list(purple = "#9f2c4f",
+               pink = "#e15656",
+               orange = '#f29655',
+               dark_green = "#347659",
+              green = "#3bab6a",
+               blue = '#5DA9E9'))
+
+  
+```
+
+#PREDICT ÁRBOL - GÉNEROS
+
+Accuracy : 0.7741
+
+#Predicción más precisa: Grupo 3
+#Predicción menos precisa: Grupo 6
+```{r}
+## PREDICCIÓN EN TEST
+ 
+predict_modeldtk = predict(modeldtk,model_dataset_testk,type='class')
+ 
+```
+```{r}
+
+confusionMatrix(data = predict_modeldtk, reference = factor(model_dataset_testk$kclusters))
+
+```
+```{r}
+
+write.csv(playlist_songs, 'playlist_songs_shiny.csv', row.names=FALSE)
+
+```

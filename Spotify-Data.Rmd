@@ -1,0 +1,170 @@
+---
+title: "Spotify Dataset"
+
+---
+
+LIBRARIES
+
+```{r}
+
+library(spotifyr)
+library(tidyverse)
+
+```
+```{r}
+
+Sys.setenv(SPOTIFY_CLIENT_ID = '**USER ID**')
+Sys.setenv(SPOTIFY_CLIENT_SECRET = '**USER SECRET**')
+
+access_token <- get_spotify_access_token()
+
+```
+
+TRACKS AUDIO FEATURES
+LOOP FUNCTION (SPOTIFY LIMITS TO 100 AT ONCE)
+
+```{r}
+
+get_track_audio_features_over_100 <- function(ids) {
+
+  ids <- ids[!is.na(ids)] 
+  len <- length(ids)
+  repetitions <- floor(len/100) * 100
+  intervals <- c(seq(from = 0, to = repetitions, by = 100), len)
+  
+  features <- data.frame()
+  for(r in seq_along(intervals)){
+    start <- intervals[r]
+    end <- intervals[r + 1] - 1
+    if(is.na(end)) break
+    
+    inner_features <- get_track_audio_features(ids = ids[start:end])
+    features <- rbind(features, inner_features)
+    
+  }
+  
+  return(features)
+  
+}
+
+```
+
+GENRES CHOICE FROM EVERYNOISE (TOP 4 SUBGENRES FOR EACH CHOSEN GENRE)
+
+```{r}
+
+genres <- c('pop', 'r&b', 'rap', 'latin', 'rock', 'edm')
+subgenres <- data.frame(genre = c(rep('pop',4), rep('rap',4), rep('rock',4),     rep('latin',4), rep('r&b',4), rep('edm',4)),
+                      subgenre = c('dance pop', 'post-teen pop', 'electropop', 'pop_rap', 
+                                    'hip hop', 'southern hip hop', 'gangster rap', 'trap',
+                                    'album rock', 'classic rock', 'permanent wave', 'hard rock',
+                                    'tropical', 'latin pop', 'reggaeton', 'latin hip hop', 
+                                    'urban contemporary', 'hip pop', 'new jack swing', 'neo soul',
+                                    'electro house', 'big room', 'pop edm', 'progressive electro house'),
+                      stringsAsFactors = FALSE)
+
+```
+
+GET EXISTING PLAYLISTS IDs FOR EACH SUBGENRE
+COMPILE IN A SINGLE DATA FRAME
+
+```{r}
+
+playlist_ids <- NULL
+
+for(g in seq_along(subgenres$subgenre)){
+  
+  out <- search_spotify(q = subgenres$subgenre[g], type = 'playlist', limit = 20)
+  out <- out %>% 
+    select(name, id) %>%
+    mutate(subgenre = subgenres$subgenre[g],
+           genre = subgenres$genre[g])
+  
+  playlist_ids <- rbind(playlist_ids, out)
+  
+}
+
+```
+GET PLAYLISTS TRACKS
+
+```{r}
+
+length(playlist_ids$id)
+
+playlist_songs <- NULL
+
+for(p in 1:480){
+  
+  out <- get_playlist_tracks(playlist_id = playlist_ids$id[p])  
+  
+  out <- out %>% as.data.frame() %>% 
+    mutate(playlist_name = playlist_ids$name[p],
+           playlist_id = playlist_ids$id[p],
+           playlist_genre = playlist_ids$genre[p],
+           playlist_subgenre = playlist_ids$subgenre[p])
+  
+ playlist_songs <- dplyr::bind_rows(playlist_songs, out)
+  
+}
+  
+
+```
+
+
+```{r}
+playlist_songs_orig <- playlist_songs
+```
+
+
+```{r}
+
+
+playlist_songs <- playlist_songs %>% unnest(cols = 'track.artists') %>%  select(c("id","name","track.duration_ms","track.id","track.name","track.popularity","track.album.name","track.album.id","track.album.release_date","name",'playlist_name','playlist_id','playlist_genre','playlist_subgenre')) %>% 
+   group_by(track.id) %>%
+    mutate(row_number = 1:n(),
+           track.artist = name) %>%
+    ungroup() %>%
+    filter(row_number == 1) 
+
+
+playlist_songs <- playlist_songs %>% select(-row_number)
+   
+
+```
+
+GET TRACKS AUDIO FEATURES
+
+```{r}
+
+
+playlist_audio <- get_track_audio_features_over_100(ids = playlist_songs$track.id)
+
+playlist_songs <- playlist_songs %>%
+  left_join(select(playlist_audio, -track_href, -uri, -analysis_url, -type, -time_signature), by = c('track.id' = 'id')) %>%
+  unique()
+
+# DELETE DUPLICATES 
+
+playlist_songs <- playlist_songs %>% 
+  group_by(playlist_genre, playlist_subgenre, track.id) %>%
+  mutate(row_number = 1:n()) %>%
+  filter(row_number == 1) %>%
+  ungroup() %>%
+  select(-row_number)
+
+```
+
+COLUMNS ORDER
+
+```{r}
+
+
+playlist_songs <- playlist_songs %>% mutate(artist_id=id) %>% select(c(-id,"playlist_id","artist_id","track.album.id","track.id","playlist_name","playlist_genre","playlist_subgenre","track.name","track.artist","track.album.name","track.album.release_date","track.popularity","duration_ms","key","mode","danceability","valence","energy","speechiness","acousticness","liveness","instrumentalness","loudness","tempo"))
+
+```
+
+
+```{r}
+write.csv(playlist_songs, 'playlist_songs_base.csv', row.names=FALSE)
+```
+
