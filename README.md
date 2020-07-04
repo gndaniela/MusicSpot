@@ -1,6 +1,9 @@
 # MusicSpot
 
-Spotifyr Analysis
+Musical Analysis with Spotifyr 
+
+  --(R wrapper for Spotify's Web API: https://github.com/charlie86/spotifyr)
+
 
 
 Spotify-Data.rmd: Generate a dataset for analysis
