@@ -1,0 +1,2 @@
+# MusicSpot
+Spotifyr Analysis
